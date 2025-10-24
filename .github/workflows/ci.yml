@@ -38,15 +38,14 @@ jobs:
         which python # Cek python path
         which mlflow # Cek mlflow path
         mlflow --version # Cek mlflow version
-        pip install docker # Pastikan docker library terinstall untuk build-docker nanti
-        
+        pip install docker # Pastikan docker library terinstall
         echo "--- Running MLflow Project ---"
         # Menjalankan project dari folder MLProject
         # --env-manager=local memberitahu MLflow untuk menggunakan env yang sudah aktif
         mlflow run MLProject --env-manager=local --experiment-name "Loan Approval CI Docker"
 
     - name: Upload MLflow run artifacts
-      # Selalu dijalankan agar kamu bisa melihat log/artifact walau training gagal
+      # Selalu dijalankan agar kamu bisa melihat log/artifact walau gagal
       if: always()
       uses: actions/upload-artifact@v4
       with:
@@ -74,16 +73,22 @@ jobs:
         IMAGE_TAG: latest
       run: |
         echo "--- Building and Pushing Docker Image ---"
-        # Mencari path artifact model dari run terbaru di experiment ID "0" (default)
-        LATEST_RUN_ID=$(ls -t ./MLProject/mlruns/0/ | head -n 1)
-        MODEL_ARTIFACT_PATH="./MLProject/mlruns/0/${LATEST_RUN_ID}/artifacts/model"
-        echo "Using model artifact from: $MODEL_ARTIFACT_PATH"
+        # Cari folder 'model' di dalam SEMUA run di mlruns, ambil yang pertama ditemukan
+        # Ini lebih robust daripada mengasumsikan Experiment ID '0'
+        MODEL_ARTIFACT_PATH=$(find ./MLProject/mlruns -type d -path '*/artifacts/model' | head -n 1)
 
-        # Cek apakah folder artifact model ada
-        if [ -d "$MODEL_ARTIFACT_PATH" ]; then
+        echo "Attempting to use model artifact path: $MODEL_ARTIFACT_PATH"
+
+        # Cek apakah variabel MODEL_ARTIFACT_PATH tidak kosong DAN folder itu ada
+        if [ -n "$MODEL_ARTIFACT_PATH" ] && [ -d "$MODEL_ARTIFACT_PATH" ]; then
+          echo "Model artifact path found."
           mlflow models build-docker -m "$MODEL_ARTIFACT_PATH" -t $IMAGE_NAME:$IMAGE_TAG --push --enable-mlserver
         else
-          echo "Error: Model artifact path not found at $MODEL_ARTIFACT_PATH"
+          echo "Error: Model artifact path could not be found automatically inside ./MLProject/mlruns"
+          echo "Please check the 'Upload MLflow run artifacts' step output to verify mlruns structure."
           echo "Is log_models=True set in mlflow.sklearn.autolog()?"
+          # Tampilkan struktur mlruns untuk debugging
+          echo "Current mlruns structure:"
+          ls -R ./MLProject/mlruns
           exit 1
         fi
