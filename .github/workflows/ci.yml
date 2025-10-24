@@ -31,8 +31,8 @@ jobs:
     - name: Install MLflow & Run MLflow Project
       shell: bash -el {0}
       run: |
-        pip install mlflow
-        mlflow run . --experiment-name "Loan Approval CI Docker" # Beri nama eksperimen berbeda jika mau
+        mlflow --version
+        mlflow run . --no-conda --experiment-name "Loan Approval CI Docker"
 
     - name: Upload MLflow run artifacts
       uses: actions/upload-artifact@v4
