@@ -1,13 +1,12 @@
-name: loan_approval_env
+name: loan-approval-env
 channels:
   - conda-forge
 dependencies:
-  - python=3.12
+  - python=3.10
   - pip
   - pip:
-    - pandas
-    - scikit-learn
-    - mlflow>=1.0
-    - matplotlib
-    - seaborn
-    - docker
+      - mlflow>=2.0
+      - scikit-learn>=1.2
+      - pandas>=1.5
+      - numpy
+      - cloudpickle
