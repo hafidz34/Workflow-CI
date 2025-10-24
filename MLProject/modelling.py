@@ -104,3 +104,4 @@ if __name__ == "__main__":
 
     print(f"Run selesai. Autolog telah mencatat hasilnya.")
     print("Hasil run tersimpan di folder 'mlruns'.")
+    #testing
