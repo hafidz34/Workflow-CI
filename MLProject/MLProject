@@ -1,0 +1,11 @@
+name: LoanApprovalCI
+conda_env: conda.yaml
+entry_points:
+  main:
+    parameters:
+      n_estimators: {type: int, default: 100}
+      random_state: {type: int, default: 42}
+      experiment_name: {type: string, default: "Loan Approval CI"}
+      run_name: {type: string, default: "CI Run"}
+
+    command: "python modelling.py --n_estimators {n_estimators} --random_state {random_state} --experiment_name {experiment_name} --run_name {run_name}"

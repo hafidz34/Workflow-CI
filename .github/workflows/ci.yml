@@ -1,0 +1,71 @@
+name: MLflow Project CI with Docker Build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  train-and-build-docker:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./MLProject
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12'
+
+    - name: Setup Conda Environment using Micromamba
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        environment-file: MLProject/conda.yaml
+        environment-name: loan_approval_env
+        cache-environment: true
+
+    - name: Install MLflow & Run MLflow Project
+      shell: bash -el {0}
+      run: |
+        pip install mlflow
+        mlflow run . --experiment-name "Loan Approval CI Docker" # Beri nama eksperimen berbeda jika mau
+
+    - name: Upload MLflow run artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mlflow-run-artifacts
+        path: ./MLProject/mlruns
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and Push Docker image using MLflow
+      shell: bash -el {0} # Butuh env Conda/MLflow aktif
+      env:
+        # Nama image di Docker Hub: username/nama-repo:tag
+        IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/loan-approval-ci # Ganti nama repo jika perlu
+        IMAGE_TAG: latest # Atau gunakan ${{ github.sha }} untuk tag unik per commit
+      run: |
+        # Perintah MLflow untuk build Docker
+        # '.' merujuk pada MLproject di direktori saat ini (./MLProject)
+        # -t adalah nama image:tag
+        # --push akan otomatis push setelah build selesai
+        mlflow models build-docker -m ./mlruns/0/$(ls -t ./mlruns/0/ | head -n 1)/artifacts/model -t $IMAGE_NAME:$IMAGE_TAG --push --enable-mlserver
+
+        # Penjelasan command di atas:
+        # -m: Path ke folder artifact model di dalam mlruns.
+        #     Kita cari run ID terbaru di experiment 0 (default)
+        #     ls -t ./mlruns/0/ | head -n 1 -> mendapatkan folder run ID terbaru
+        # -t: Nama image dan tag ($IMAGE_NAME:$IMAGE_TAG dari env)
+        # --push: Push ke Docker Hub setelah build
+        # --enable-mlserver: Menggunakan MLServer sebagai serving engine di dalam Docker (standar MLflow)

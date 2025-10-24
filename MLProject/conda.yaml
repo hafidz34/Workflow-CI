@@ -1,0 +1,12 @@
+name: loan_approval_env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - pip:
+    - pandas
+    - scikit-learn
+    - mlflow>=1.0
+    - matplotlib
+    - seaborn
