@@ -58,7 +58,6 @@ if __name__ == "__main__":
 
     # Aktifkan MLflow Autologging
     # Ini akan otomatis log ke run yang dibuat oleh `mlflow run`
-    # Nama eksperimen dari `mlflow run` akan otomatis digunakan
     mlflow.sklearn.autolog(
         log_model_signatures=True,
         log_input_examples=True,
