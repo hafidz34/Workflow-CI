@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./MLProject
+        working-directory: ./
 
     steps:
     - name: Checkout code
@@ -24,48 +24,64 @@ jobs:
     - name: Setup Conda Environment using Micromamba
       uses: mamba-org/setup-micromamba@v1
       with:
+        # Path relatif dari root repository
         environment-file: MLProject/conda.yaml
         environment-name: loan_approval_env
         cache-environment: true
 
-    - name: Install MLflow & Run MLflow Project
+    - name: Run MLflow Project using active environment
+      # Menggunakan shell yang sudah diinisialisasi micromamba
       shell: bash -el {0}
       run: |
-        mlflow --version
-        mlflow run . --no-conda --experiment-name "Loan Approval CI Docker"
+        echo "--- Verifying Environment ---"
+        which python # Cek python path
+        which mlflow # Cek mlflow path
+        mlflow --version # Cek mlflow version
+        pip install docker # Pastikan docker library terinstall untuk build-docker nanti
+        echo "--- Running MLflow Project ---"
+        # Menjalankan project dari folder MLProject
+        # --env-manager=local memberitahu MLflow untuk menggunakan env yang sudah aktif
+        mlflow run MLProject --env-manager=local --experiment-name "Loan Approval CI Docker"
 
     - name: Upload MLflow run artifacts
+      # Selalu dijalankan meskipun langkah sebelumnya gagal (jika ada artifact parsial)
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: mlflow-run-artifacts
+        # Path relatif dari root repository
         path: ./MLProject/mlruns
 
+    # Langkah Docker hanya dijalankan jika training berhasil
     - name: Set up Docker Buildx
+      if: success() # Hanya jika langkah mlflow run berhasil
       uses: docker/setup-buildx-action@v3
 
     - name: Login to Docker Hub
+      if: success()
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
     - name: Build and Push Docker image using MLflow
+      if: success()
       shell: bash -el {0} # Butuh env Conda/MLflow aktif
       env:
-        # Nama image di Docker Hub: username/nama-repo:tag
-        IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/loan-approval-ci # Ganti nama repo jika perlu
-        IMAGE_TAG: latest # Atau gunakan ${{ github.sha }} untuk tag unik per commit
+        IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/loan-approval-ci # Sesuaikan nama repo jika perlu
+        IMAGE_TAG: latest
       run: |
-        # Perintah MLflow untuk build Docker
-        # '.' merujuk pada MLproject di direktori saat ini (./MLProject)
-        # -t adalah nama image:tag
-        # --push akan otomatis push setelah build selesai
-        mlflow models build-docker -m ./mlruns/0/$(ls -t ./mlruns/0/ | head -n 1)/artifacts/model -t $IMAGE_NAME:$IMAGE_TAG --push --enable-mlserver
+        echo "--- Building and Pushing Docker Image ---"
+        # Mencari path artifact model dari run terbaru di experiment ID 0 (default)
+        # Penting: Pastikan eksperimen ID benar jika tidak default
+        LATEST_RUN_ID=$(ls -t ./MLProject/mlruns/0/ | head -n 1)
+        MODEL_ARTIFACT_PATH="./MLProject/mlruns/0/${LATEST_RUN_ID}/artifacts/model"
+        echo "Using model artifact from: $MODEL_ARTIFACT_PATH"
 
-        # Penjelasan command di atas:
-        # -m: Path ke folder artifact model di dalam mlruns.
-        #     Kita cari run ID terbaru di experiment 0 (default)
-        #     ls -t ./mlruns/0/ | head -n 1 -> mendapatkan folder run ID terbaru
-        # -t: Nama image dan tag ($IMAGE_NAME:$IMAGE_TAG dari env)
-        # --push: Push ke Docker Hub setelah build
-        # --enable-mlserver: Menggunakan MLServer sebagai serving engine di dalam Docker (standar MLflow)
+        # Cek apakah folder artifact model ada
+        if [ -d "$MODEL_ARTIFACT_PATH" ]; then
+          mlflow models build-docker -m "$MODEL_ARTIFACT_PATH" -t $IMAGE_NAME:$IMAGE_TAG --push --enable-mlserver
+        else
+          echo "Error: Model artifact path not found at $MODEL_ARTIFACT_PATH"
+          exit 1
+        fi

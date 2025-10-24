@@ -10,3 +10,4 @@ dependencies:
     - mlflow>=1.0
     - matplotlib
     - seaborn
+    - docker
