@@ -1,113 +1,94 @@
-name: MLflow CI - retrain & build docker
+name: MLflow Project CI with Docker Build
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
-env:
-  PYTHON_VERSION: "3.10"
-
 jobs:
-  retrain:
+  train-and-build-docker:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        # Menjalankan semua perintah dari root repository
+        working-directory: ./
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.12' # Sesuaikan dengan conda.yaml
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r MLProject/requirements.txt
-          pip install "mlflow[extras]"
+    - name: Setup Conda Environment using Micromamba
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        # Path relatif dari root repository
+        environment-file: MLProject/conda.yaml
+        environment-name: loan_approval_env
+        cache-environment: true
 
-      - name: Run MLflow Project (local env)
-        run: |
-          cd MLProject
-          mlflow run . -P n_estimators=100 -P random_state=42 --env-manager local
+    - name: Run MLflow Project using active environment
+      # Menggunakan shell yang sudah diinisialisasi micromamba
+      shell: bash -el {0}
+      run: |
+        echo "--- Verifying Environment ---"
+        which python # Cek python path
+        which mlflow # Cek mlflow path
+        mlflow --version # Cek mlflow version
+        pip install docker # Pastikan docker library terinstall
+        echo "--- Running MLflow Project ---"
+        # Menjalankan project dari folder MLProject
+        # --env-manager=local memberitahu MLflow untuk menggunakan env yang sudah aktif
+        mlflow run MLProject --env-manager=local --experiment-name "Loan Approval CI Docker"
 
-      - name: Show created files
-        run: |
-          cd MLProject
-          echo "Run files:"
-          ls -la
-          ls -la mlruns || true
-          if [ -f run_id.txt ]; then echo "run_id:" $(cat run_id.txt); fi
+    - name: Upload MLflow run artifacts
+      # Selalu dijalankan agar kamu bisa melihat log/artifact walau gagal
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: mlflow-run-artifacts
+        # Path relatif dari root repository
+        path: ./MLProject/mlruns
 
-      - name: Upload mlruns and model artifacts to GitHub Actions artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: mlruns-and-model
-          path: |
-            MLProject/mlruns
-            MLProject/run_id.txt
-            MLProject/run_summary.json
+    # --- Langkah Docker hanya dijalankan jika training berhasil ---
+    - name: Set up Docker Buildx
+      if: success() # Hanya jika langkah mlflow run berhasil
+      uses: docker/setup-buildx-action@v3
 
-  build-and-push-docker:
-    needs: retrain
-    runs-on: ubuntu-latest
-    # Only run this job when the DockerHub secrets are present (non-empty)
-    if: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_PASSWORD != '' && secrets.DOCKERHUB_REPO != '' }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Login to Docker Hub
+      if: success()
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Basic checks for secrets (fail with clear message if missing)
-        run: |
-          if [ -z "${{ secrets.DOCKERHUB_USERNAME }}" ] || [ -z "${{ secrets.DOCKERHUB_PASSWORD }}" ] || [ -z "${{ secrets.DOCKERHUB_REPO }}" ]; then
-            echo "ERROR: Docker Hub secrets not set. Set DOCKERHUB_USERNAME, DOCKERHUB_PASSWORD, DOCKERHUB_REPO in repo secrets."
-            exit 1
-          fi
-          echo "Docker Hub secrets appear set."
+    - name: Build and Push Docker image using MLflow
+      if: success()
+      shell: bash -el {0} # Butuh env Conda/MLflow aktif
+      env:
+        IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/loan-approval-ci # Sesuaikan nama repo jika perlu
+        IMAGE_TAG: latest
+      run: |
+        echo "--- Building and Pushing Docker Image ---"
+        # Cari folder 'model' di dalam SEMUA run di mlruns, ambil yang pertama ditemukan
+        # Ini lebih robust daripada mengasumsikan Experiment ID '0'
+        MODEL_ARTIFACT_PATH=$(find ./MLProject/mlruns -type d -path '*/artifacts/model' | head -n 1)
 
-      - name: Install Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        echo "Attempting to use model artifact path: $MODEL_ARTIFACT_PATH"
 
-      - name: Set up Python (for mlflow CLI)
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install mlflow
-        run: |
-          python -m pip install --upgrade pip
-          pip install "mlflow[extras]"
-
-      - name: Get run_id from repo (generated by retrain job)
-        run: |
-          if [ -f MLProject/run_id.txt ]; then
-            RUN_ID=$(cat MLProject/run_id.txt)
-            echo "Found run id: $RUN_ID"
-            echo "RUN_ID=$RUN_ID" >> $GITHUB_ENV
-          else
-            echo "ERROR: MLProject/run_id.txt not found. Ensure retrain step produced it."
-            exit 1
-          fi
-
-      - name: Log in to Docker Hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
-        run: |
-          echo "$DOCKERHUB_PASSWORD" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-
-      - name: Build Docker image using mlflow models build-docker
-        env:
-          RUN_ID: ${{ env.RUN_ID }}
-          DOCKER_IMAGE_NAME: ${{ secrets.DOCKERHUB_REPO }}
-        run: |
-          echo "Building docker image from runs:/$RUN_ID/model"
-          mlflow models build-docker --model-uri "runs:/$RUN_ID/model" --name "$DOCKER_IMAGE_NAME"
-
-      - name: Push Docker image
-        run: |
-          docker push "${{ secrets.DOCKERHUB_REPO }}"
-
-      - name: Publish build metadata
-        run: |
-          echo "Docker image pushed: ${{ secrets.DOCKERHUB_REPO }}"
+        # Cek apakah variabel MODEL_ARTIFACT_PATH tidak kosong DAN folder itu ada
+        if [ -n "$MODEL_ARTIFACT_PATH" ] && [ -d "$MODEL_ARTIFACT_PATH" ]; then
+          echo "Model artifact path found."
+          mlflow models build-docker -m "$MODEL_ARTIFACT_PATH" -t $IMAGE_NAME:$IMAGE_TAG --push --enable-mlserver
+        else
+          echo "Error: Model artifact path could not be found automatically inside ./MLProject/mlruns"
+          echo "Please check the 'Upload MLflow run artifacts' step output to verify mlruns structure."
+          echo "Is log_models=True set in mlflow.sklearn.autolog()?"
+          # Tampilkan struktur mlruns untuk debugging
+          echo "Current mlruns structure:"
+          ls -R ./MLProject/mlruns
+          exit 1
+        fi
