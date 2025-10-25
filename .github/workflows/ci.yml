@@ -8,10 +8,6 @@ on:
 jobs:
   train-and-build-docker:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        # Menjalankan semua perintah dari root repository
-        working-directory: ./
 
     steps:
     - name: Checkout code
@@ -20,42 +16,50 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.12' # Sesuaikan dengan conda.yaml
+        python-version: '3.12'
 
     - name: Setup Conda Environment using Micromamba
       uses: mamba-org/setup-micromamba@v1
       with:
-        # Path relatif dari root repository
         environment-file: MLProject/conda.yaml
         environment-name: loan_approval_env
         cache-environment: true
 
-    - name: Run MLflow Project using active environment
-      # Menggunakan shell yang sudah diinisialisasi micromamba
+    - name: Run MLflow Project
       shell: bash -el {0}
       run: |
-        echo "--- Verifying Environment ---"
-        which python # Cek python path
-        which mlflow # Cek mlflow path
-        mlflow --version # Cek mlflow version
-        pip install docker # Pastikan docker library terinstall
-        echo "--- Running MLflow Project ---"
-        # Menjalankan project dari folder MLProject
-        # --env-manager=local memberitahu MLflow untuk menggunakan env yang sudah aktif
-        mlflow run MLProject --env-manager=local --experiment-name "Loan Approval CI Docker"
+        echo "=== Verifying Environment ==="
+        which python
+        which mlflow
+        mlflow --version
+        pip install docker
+        
+        echo "=== Running MLflow Project ==="
+        cd MLProject
+        mlflow run . --env-manager=local --experiment-name "LoanApprovalCI"
+
+    - name: Debug MLruns Structure
+      if: always()
+      shell: bash -el {0}
+      run: |
+        echo "=== MLruns Directory Structure ==="
+        ls -R ./MLProject/mlruns || echo "mlruns tidak ditemukan"
+        echo ""
+        echo "=== Mencari model artifacts (MLflow 2.0+ structure) ==="
+        find ./MLProject/mlruns -type d -path '*/models/*/artifacts' || echo "Tidak ada di models/"
+        echo ""
+        echo "=== Mencari model artifacts (legacy structure) ==="
+        find ./MLProject/mlruns -type d -path '*/artifacts/model' || echo "Tidak ada di artifacts/model"
 
     - name: Upload MLflow run artifacts
-      # Selalu dijalankan agar kamu bisa melihat log/artifact walau gagal
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: mlflow-run-artifacts
-        # Path relatif dari root repository
         path: ./MLProject/mlruns
 
-    # --- Langkah Docker hanya dijalankan jika training berhasil ---
     - name: Set up Docker Buildx
-      if: success() # Hanya jika langkah mlflow run berhasil
+      if: success()
       uses: docker/setup-buildx-action@v3
 
     - name: Login to Docker Hub
@@ -67,28 +71,62 @@ jobs:
 
     - name: Build and Push Docker image using MLflow
       if: success()
-      shell: bash -el {0} # Butuh env Conda/MLflow aktif
+      shell: bash -el {0}
       env:
-        IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/loan-approval-ci # Sesuaikan nama repo jika perlu
+        IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/loan-approval-ci
         IMAGE_TAG: latest
       run: |
-        echo "--- Building and Pushing Docker Image ---"
-        # Cari folder 'model' di dalam SEMUA run di mlruns, ambil yang pertama ditemukan
-        # Ini lebih robust daripada mengasumsikan Experiment ID '0'
-        MODEL_ARTIFACT_PATH=$(find ./MLProject/mlruns -type d -path '*/artifacts/model' | head -n 1)
-
-        echo "Attempting to use model artifact path: $MODEL_ARTIFACT_PATH"
-
-        # Cek apakah variabel MODEL_ARTIFACT_PATH tidak kosong DAN folder itu ada
-        if [ -n "$MODEL_ARTIFACT_PATH" ] && [ -d "$MODEL_ARTIFACT_PATH" ]; then
-          echo "Model artifact path found."
-          mlflow models build-docker -m "$MODEL_ARTIFACT_PATH" -t $IMAGE_NAME:$IMAGE_TAG --push --enable-mlserver
-        else
-          echo "Error: Model artifact path could not be found automatically inside ./MLProject/mlruns"
-          echo "Please check the 'Upload MLflow run artifacts' step output to verify mlruns structure."
-          echo "Is log_models=True set in mlflow.sklearn.autolog()?"
-          # Tampilkan struktur mlruns untuk debugging
-          echo "Current mlruns structure:"
-          ls -R ./MLProject/mlruns
+        echo "=== Building and Pushing Docker Image ==="
+        
+        # Try MLflow 2.0+ structure first (models/)
+        MODEL_ARTIFACT_PATH=$(find ./MLProject/mlruns -type d -path '*/models/*/artifacts' | sort -r | head -n 1)
+        
+        # Fallback to legacy structure
+        if [ -z "$MODEL_ARTIFACT_PATH" ]; then
+          echo "Trying legacy structure..."
+          MODEL_ARTIFACT_PATH=$(find ./MLProject/mlruns -type d -path '*/artifacts/model' | sort -r | head -n 1)
+        fi
+        
+        echo "Model artifact path: $MODEL_ARTIFACT_PATH"
+        
+        if [ -z "$MODEL_ARTIFACT_PATH" ]; then
+          echo "❌ ERROR: Tidak dapat menemukan model artifact"
+          echo "Struktur mlruns:"
+          find ./MLProject/mlruns -type d -name "artifacts"
           exit 1
         fi
+        
+        if [ ! -d "$MODEL_ARTIFACT_PATH" ]; then
+          echo "❌ ERROR: Path $MODEL_ARTIFACT_PATH tidak valid"
+          exit 1
+        fi
+        
+        if [ ! -f "$MODEL_ARTIFACT_PATH/MLmodel" ]; then
+          echo "❌ ERROR: File MLmodel tidak ditemukan"
+          ls -la "$MODEL_ARTIFACT_PATH"
+          exit 1
+        fi
+        
+        echo "✅ Model artifact valid"
+        echo "Contents:"
+        ls -la "$MODEL_ARTIFACT_PATH"
+        
+        echo "Building Docker image..."
+        mlflow models build-docker -m "$MODEL_ARTIFACT_PATH" -n $IMAGE_NAME:$IMAGE_TAG --enable-mlserver
+        
+        echo "Pushing Docker image..."
+        docker push $IMAGE_NAME:$IMAGE_TAG
+        
+        echo "✅ Success!"
+        echo "📦 Image: $IMAGE_NAME:$IMAGE_TAG"
+        
+        # Save Docker Hub link
+        mkdir -p ./artifacts
+        echo "https://hub.docker.com/r/${{ secrets.DOCKERHUB_USERNAME }}/loan-approval-ci" > ./artifacts/DockerHub_Link.txt
+        
+    - name: Upload Docker Hub Link
+      if: success()
+      uses: actions/upload-artifact@v4
+      with:
+        name: dockerhub-link
+        path: ./artifacts/DockerHub_Link.txt
