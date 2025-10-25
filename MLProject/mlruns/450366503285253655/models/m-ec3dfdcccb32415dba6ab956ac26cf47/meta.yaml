@@ -1,0 +1,10 @@
+artifact_location: file:///C:/Users/User/Downloads/SMSML_Muhammad-Hafidz-Rizki/Workflow-CI/MLProject/mlruns/450366503285253655/models/m-ec3dfdcccb32415dba6ab956ac26cf47/artifacts
+creation_timestamp: 1761360000427
+experiment_id: '450366503285253655'
+last_updated_timestamp: 1761360005105
+model_id: m-ec3dfdcccb32415dba6ab956ac26cf47
+model_type: null
+name: model
+source_run_id: 5af04565fcfd4e3794e2aff47cfa622b
+status: 2
+status_message: null

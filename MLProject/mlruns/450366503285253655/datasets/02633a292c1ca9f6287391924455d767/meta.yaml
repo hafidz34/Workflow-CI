@@ -1,0 +1,10 @@
+digest: b307a9f6
+name: dataset
+profile: '{"num_rows": 400, "num_elements": 2000}'
+schema: '{"mlflow_colspec": [{"type": "double", "name": "income", "required": true},
+  {"type": "double", "name": "credit_score", "required": true}, {"type": "double",
+  "name": "loan_amount", "required": true}, {"type": "double", "name": "years_employed",
+  "required": true}, {"type": "double", "name": "points", "required": true}]}'
+source: '{"tags": {"mlflow.user": "User", "mlflow.source.name": "modelling.py", "mlflow.source.type":
+  "LOCAL", "mlflow.source.git.commit": "f7896afe0cc72136f9204aa98207107e61e462a3"}}'
+source_type: code

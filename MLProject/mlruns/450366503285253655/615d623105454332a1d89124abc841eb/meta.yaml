@@ -1,0 +1,14 @@
+artifact_uri: file:///C:/Users/User/Downloads/SMSML_Muhammad-Hafidz-Rizki/Workflow-CI/MLProject/mlruns/450366503285253655/615d623105454332a1d89124abc841eb/artifacts
+end_time: 1761359899431
+entry_point_name: ''
+experiment_id: '450366503285253655'
+lifecycle_stage: active
+run_id: 615d623105454332a1d89124abc841eb
+run_name: welcoming-mouse-524
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1761359867355
+status: 3
+tags: []
+user_id: User
